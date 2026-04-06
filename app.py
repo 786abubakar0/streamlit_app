@@ -139,27 +139,22 @@ def check_stock_status(item):
 
 def render_product_row(item, is_comparison=False):
     # 1. Create a truly unique ID using Title + Branch
-    # This prevents duplicates if the same product exists in different branches
     unique_id = hashlib.md5(f"{item['title']}{item['branch_name']}".encode()).hexdigest()
     
-    # 2. Add a prefix based on WHERE it is being rendered (Search vs Comparison)
-    # This prevents the "Duplicate Key" error when looking at the same item in two tabs
+    # 2. Add a prefix based on WHERE it is being rendered
     prefix = "comp" if is_comparison else "search"
     cb_key = f"{prefix}_{unique_id}_{item['branch_name']}"
 
     def toggle_basket():
-        # Check the specific checkbox state using the unique key
         if st.session_state[cb_key]:
             st.session_state.compare_basket[unique_id] = item
         else:
             st.session_state.compare_basket.pop(unique_id, None)
 
+    # --- MAIN ROW ---
     cols = st.columns([0.5, 3, 1, 1, 1])
-    
-    # Check if this item is already in the basket to set the default value
     in_basket = unique_id in st.session_state.compare_basket
     
-    # Render the checkbox with the guaranteed unique key
     cols[0].checkbox(
         " ", 
         key=cb_key, 
@@ -174,10 +169,27 @@ def render_product_row(item, is_comparison=False):
     p = item['display_price']
     cols[2].markdown(f"#### Rs. {int(p)}" if p else "N/A")
     cols[3].markdown(f"### {'✅' if item['is_actually_in_stock'] else '❌'}")
+    
     if item.get('url'): 
         cols[4].link_button("Visit", item['url'], use_container_width=True)
-    st.divider()
 
+    # --- SHOW DETAILS (The missing part) ---
+    with st.expander("📦 View Stock Details"):
+        d_cols = st.columns(2)
+        
+        # Total Stock info
+        stock = item.get('total_stock', 'N/A')
+        d_cols[0].write(f"**Total Stock:** {stock}")
+        
+        # Per Order Limit info
+        limit = item.get('max_allow_per_order', 'N/A')
+        d_cols[1].write(f"**Limit per Order:** {limit}")
+        
+        # Check if actually out of stock based on backend logic
+        if not item['is_actually_in_stock']:
+            st.warning("⚠️ This item is currently unavailable at this branch.")
+
+    st.divider()
 # 4. Main App Logic
 if verify_device():
     st.title("🛒 Price Comparison PK")
