@@ -6,7 +6,9 @@ import hashlib
 from thefuzz import fuzz
 import re
 import itertools
-from datetime import datetime, timezone 
+from datetime import datetime, timezone, timedelta  # Add 'timedelta' here
+import extra_streamlit_components as stx
+import time
 
 # 1. Setup Supabase
 @st.cache_resource
@@ -35,6 +37,9 @@ if "cached_results" not in st.session_state:
 
 # 3. Device Security
 def verify_device():
+    cookie_manager = stx.CookieManager()
+    
+    # Existing JS fingerprinting
     ua = streamlit_js_eval(js_expressions="navigator.userAgent", key="ua")
     screen = streamlit_js_eval(js_expressions="screen.width + 'x' + screen.height", key="res")
     cores = streamlit_js_eval(js_expressions="navigator.hardwareConcurrency", key="cores")
@@ -47,34 +52,40 @@ def verify_device():
 
     signature = hashlib.sha256(f"{ua}|{screen}|{cores}|{timezone_val}|{canvas_fp}".encode()).hexdigest()
 
-    if "auth_token" not in st.session_state:
+    # --- THE FIX: Try to get token from Cookie ---
+    saved_token = cookie_manager.get('auth_token_pk')
+    
+    # Priority: 1. Session State, 2. Browser Cookie
+    current_token = st.session_state.get("auth_token") or saved_token
+
+    if not current_token:
         st.markdown("### 🔐 Device Verification Required")
-        token = st.text_input("Enter Access Token", type="password")
+        token_input = st.text_input("Enter Access Token", type="password", key="login_input")
+        
         if st.button("Verify Device"):
-            res = supabase.table("authorized_devices").select("*").eq("token", token).execute()
+            res = supabase.table("authorized_devices").select("*").eq("token", token_input).execute()
             if res.data:
                 device = res.data[0]
-                
-                # Check 1: Is the token deactivated?
                 if not device["is_active"]:
-                    st.error("🚫 This access token has been deactivated.")
+                    st.error("Token deactivated.")
                     return False
-                
-                # Check 2: Is it locked to a different device?
                 if device["device_signature"] and device["device_signature"] != signature:
-                    st.error("🔒 Token Locked: This token is already registered to another device.")
+                    st.error("Token locked to another device.")
                     return False
                 
-                # Success: Register signature if first time use
-                if not device["device_signature"]:
-                    supabase.table("authorized_devices").update({"device_signature": signature}).eq("token", token).execute()
-                
-                st.session_state.auth_token = token
+                # SAVE TO COOKIE
+                cookie_manager.set('auth_token_pk', token_input, expires_at=datetime.now() + timedelta(days=30))
+                st.session_state.auth_token = token_input
                 st.rerun()
             else:
-                # Check 3: Wrong token entirely
-                st.error("❌ Invalid Access Token. Please check and try again.")
+                st.error("Invalid Token.")
         return False
+    
+    # If we reached here, we have a token. 
+    # Make sure session_state is updated if we used a cookie
+    if saved_token and "auth_token" not in st.session_state:
+        st.session_state.auth_token = saved_token
+
     return True
 
 # --- Internal Logic Helpers ---
