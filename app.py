@@ -27,7 +27,16 @@ def get_branches():
         return []
 # 2. UI Configuration
 st.set_page_config(page_title="Price Comparison PK", layout="wide", page_icon="🛒")
-
+# --- HIDE STREAMLIT ELEMENTS ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            .st-emotion-cache-1639syv {display: none;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 # --- Initialize Session States ---
 if "compare_basket" not in st.session_state:
     st.session_state.compare_basket = {}
@@ -37,28 +46,40 @@ if "cached_results" not in st.session_state:
 
 # 3. Device Security
 def verify_device():
+    # 1. Instant Check: If already in memory for this session, proceed immediately
+    if st.session_state.get("auth_token"):
+        return True
+
     cookie_manager = stx.CookieManager()
     
-    # Existing JS fingerprinting
-    ua = streamlit_js_eval(js_expressions="navigator.userAgent", key="ua")
-    screen = streamlit_js_eval(js_expressions="screen.width + 'x' + screen.height", key="res")
-    cores = streamlit_js_eval(js_expressions="navigator.hardwareConcurrency", key="cores")
-    timezone_val = streamlit_js_eval(js_expressions="Intl.DateTimeFormat().resolvedOptions().timeZone", key="tz")
-    canvas_js = """(function(){var canvas = document.createElement('canvas');var ctx = canvas.getContext('2d');ctx.textBaseline = "top";ctx.font = "14px 'Arial'";ctx.fillText("PriceCheck-Auth-99", 2, 2);return canvas.toDataURL();})()"""
-    canvas_fp = streamlit_js_eval(js_expressions=canvas_js, key="canvas")
+    # 2. THE LOCAL REFRESH FIX: 
+    # Give the browser a moment to provide the cookies.
+    # We try 5 times (0.1s each) to see if the cookie appears.
+    saved_token = None
+    for _ in range(5):
+        saved_token = cookie_manager.get('auth_token_pk')
+        if saved_token:
+            break
+        time.sleep(0.1) 
 
-    if not all([ua, screen, cores, canvas_fp]):
-        return False 
+    # 3. If still no token found in cookies, we start the Login/Fingerprint process
+    if not saved_token:
+        # These JS calls are slow, so we only run them if we really need to log in
+        ua = streamlit_js_eval(js_expressions="navigator.userAgent", key="ua")
+        screen = streamlit_js_eval(js_expressions="screen.width + 'x' + screen.height", key="res")
+        cores = streamlit_js_eval(js_expressions="navigator.hardwareConcurrency", key="cores")
+        timezone_val = streamlit_js_eval(js_expressions="Intl.DateTimeFormat().resolvedOptions().timeZone", key="tz")
+        canvas_js = """(function(){var canvas = document.createElement('canvas');var ctx = canvas.getContext('2d');ctx.textBaseline = "top";ctx.font = "14px 'Arial'";ctx.fillText("PriceCheck-Auth-99", 2, 2);return canvas.toDataURL();})()"""
+        canvas_fp = streamlit_js_eval(js_expressions=canvas_js, key="canvas")
 
-    signature = hashlib.sha256(f"{ua}|{screen}|{cores}|{timezone_val}|{canvas_fp}".encode()).hexdigest()
+        # If JS is still loading, show a spinner
+        if not all([ua, screen, cores, canvas_fp]):
+            with st.spinner("Checking security..."):
+                time.sleep(0.1)
+            return False 
 
-    # --- THE FIX: Try to get token from Cookie ---
-    saved_token = cookie_manager.get('auth_token_pk')
-    
-    # Priority: 1. Session State, 2. Browser Cookie
-    current_token = st.session_state.get("auth_token") or saved_token
-
-    if not current_token:
+        signature = hashlib.sha256(f"{ua}|{screen}|{cores}|{timezone_val}|{canvas_fp}".encode()).hexdigest()
+        
         st.markdown("### 🔐 Device Verification Required")
         token_input = st.text_input("Enter Access Token", type="password", key="login_input")
         
@@ -73,7 +94,7 @@ def verify_device():
                     st.error("Token locked to another device.")
                     return False
                 
-                # SAVE TO COOKIE
+                # SAVE TO BROWSER COOKIE
                 cookie_manager.set('auth_token_pk', token_input, expires_at=datetime.now() + timedelta(days=30))
                 st.session_state.auth_token = token_input
                 st.rerun()
@@ -81,11 +102,8 @@ def verify_device():
                 st.error("Invalid Token.")
         return False
     
-    # If we reached here, we have a token. 
-    # Make sure session_state is updated if we used a cookie
-    if saved_token and "auth_token" not in st.session_state:
-        st.session_state.auth_token = saved_token
-
+    # 4. Success: Move the cookie token into session state for the rest of the app
+    st.session_state.auth_token = saved_token
     return True
 
 # --- Internal Logic Helpers ---
