@@ -3,3 +3,4 @@ supabase
 streamlit-js-eval
 thefuzz
 python-Levenshtein
+extra-streamlit-components
