@@ -54,13 +54,26 @@ def verify_device():
             res = supabase.table("authorized_devices").select("*").eq("token", token).execute()
             if res.data:
                 device = res.data[0]
-                if not device["is_active"]: return False
-                if device["device_signature"] and device["device_signature"] != signature: return False
+                
+                # Check 1: Is the token deactivated?
+                if not device["is_active"]:
+                    st.error("🚫 This access token has been deactivated.")
+                    return False
+                
+                # Check 2: Is it locked to a different device?
+                if device["device_signature"] and device["device_signature"] != signature:
+                    st.error("🔒 Token Locked: This token is already registered to another device.")
+                    return False
+                
+                # Success: Register signature if first time use
                 if not device["device_signature"]:
                     supabase.table("authorized_devices").update({"device_signature": signature}).eq("token", token).execute()
+                
                 st.session_state.auth_token = token
                 st.rerun()
-            else: st.error("Invalid Token.")
+            else:
+                # Check 3: Wrong token entirely
+                st.error("❌ Invalid Access Token. Please check and try again.")
         return False
     return True
 
