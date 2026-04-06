@@ -163,9 +163,11 @@ def render_product_row(item, is_comparison=False):
     )
 
     with cols[1]:
+        stock = item.get('total_stock', 'N/A')
+        limit = item.get('max_allow_per_order', 'N/A')
         st.markdown(f"**{item['title']}**")
-        st.caption(f"🏪 {item['branch_name']} | 🕒 {item['time_ago']}")
-    
+        st.caption(f"🏪 {item['branch_name']} | 🕒 {item['time_ago']} | 📦 Stock: {stock} | 🚫 Limit: {limit}")
+        # st.caption(f"📦 Stock: {stock} | 🚫 Limit: {limit}")
     p = item['display_price']
     cols[2].markdown(f"#### Rs. {int(p)}" if p else "N/A")
     cols[3].markdown(f"### {'✅' if item['is_actually_in_stock'] else '❌'}")
@@ -174,20 +176,20 @@ def render_product_row(item, is_comparison=False):
         cols[4].link_button("Visit", item['url'], use_container_width=True)
 
     # --- SHOW DETAILS (The missing part) ---
-    with st.expander("📦 View Stock Details"):
-        d_cols = st.columns(2)
+    # with st.expander("📦 View Stock Details"):
+    #     d_cols = st.columns(2)
         
-        # Total Stock info
-        stock = item.get('total_stock', 'N/A')
-        d_cols[0].write(f"**Total Stock:** {stock}")
+    #     # Total Stock info
+    #     stock = item.get('total_stock', 'N/A')
+    #     d_cols[0].write(f"**Total Stock:** {stock}")
         
-        # Per Order Limit info
-        limit = item.get('max_allow_per_order', 'N/A')
-        d_cols[1].write(f"**Limit per Order:** {limit}")
+    #     # Per Order Limit info
+    #     limit = item.get('max_allow_per_order', 'N/A')
+    #     d_cols[1].write(f"**Limit per Order:** {limit}")
         
-        # Check if actually out of stock based on backend logic
-        if not item['is_actually_in_stock']:
-            st.warning("⚠️ This item is currently unavailable at this branch.")
+    #     # Check if actually out of stock based on backend logic
+    #     if not item['is_actually_in_stock']:
+    #         st.warning("⚠️ This item is currently unavailable at this branch.")
 
     st.divider()
 # 4. Main App Logic
