@@ -1,0 +1,5 @@
+streamlit
+supabase
+streamlit-js-eval
+thefuzz
+python-Levenshtein
