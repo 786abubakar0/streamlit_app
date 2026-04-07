@@ -30,12 +30,21 @@ def get_branches():
 st.set_page_config(page_title="Price Comparison PK", layout="wide", page_icon="🛒")
 
 # --- HIDE STREAMLIT ELEMENTS ---
+# --- HIDE STREAMLIT ELEMENTS (Improved) ---
 hide_st_style = """
             <style>
+            /* Hide the Main Menu and Footer */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
-            header {visibility: hidden;}
-            .st-emotion-cache-1639syv {display: none;}
+            
+            /* DO NOT hide the header entirely, just the parts we don't want */
+            /* This ensures the sidebar toggle button stays visible on mobile */
+            header[data-testid="stHeader"] {
+                background: rgba(0,0,0,0);
+            }
+            
+            /* Remove the 'Made with Streamlit' link specifically */
+            div[data-testid="stStatusWidget"] {display: none;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
