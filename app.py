@@ -45,6 +45,33 @@ hide_st_style = """
             
             /* Remove the 'Made with Streamlit' link specifically */
             div[data-testid="stStatusWidget"] {display: none;}
+
+          /* 2. THE CHECKBOX REVOLUTION */
+    /* Target the base checkbox container */
+    
+   /* 1. The Outer Red Box */
+[data-testid="stCheckbox"] {
+    display: flex !important;
+    justify-content: center !important; 
+    align-items: center !important;     
+    padding: 2px !important; 
+    background-color: rgba(255, 75, 75, 0.6) !important; /* Solid Sharp Red */
+    border-radius: 8px;
+    width: 100% !important;
+    margin: 0 auto !important; /* This centers the whole red box in your column */
+}
+
+/* 2. THE FIX: Center the actual checkbox inside the red box */
+[data-testid="stCheckbox"] div {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    margin: 0 !important; /* Removes the left margin Streamlit adds */
+    padding: 0 !important;
+}
+
+
+
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -93,13 +120,21 @@ def verify_device():
         if btn_place.button("Verify & Save Device", use_container_width=True):
             btn_place.info("⏳ Authenticating...")
             res = supabase.table("authorized_devices").select("*").eq("token", token_input).execute()
+            
             if res.data:
                 device = res.data[0]
-                if not device["is_active"]: st.error("🚫 Token deactivated.")
+                if not device["is_active"]: 
+                    st.error("🚫 Token deactivated.")
                 elif device["device_signature"] and device["device_signature"] != signature:
                     st.error("🔒 Token locked to another device.")
                 else:
-                    cookie_manager.set('auth_token_pk', token_input, expires_at=datetime.now() + timedelta(days=30))
+                    # --- NEW LOGIC START ---
+                    # If the DB signature is empty, save the current one to "lock" it
+                    if not device["device_signature"]:
+                        supabase.table("authorized_devices").update({"device_signature": signature}).eq("token", token_input).execute()
+                    # --- NEW LOGIC END ---
+
+                    cookie_manager.set('auth_token_pk', token_input, expires_at=datetime.now() + timedelta(days=1))
                     st.session_state.auth_token = token_input
                     st.success("✅ Access Granted!")
                     time.sleep(0.6) 
@@ -107,8 +142,20 @@ def verify_device():
             else:
                 st.error("❌ Invalid Token.")
         return False
-    st.session_state.auth_token = saved_token
-    return True
+    
+    # After the "if not saved_token" block
+    if saved_token and not st.session_state.auth_token:
+        # DO NOT just return True. Check the DB first!
+        res = supabase.table("authorized_devices").select("is_active").eq("token", saved_token).execute()
+        
+        if res.data and res.data[0]["is_active"]:
+            st.session_state.auth_token = saved_token
+            return True
+        else:
+            # Token was deleted, deactivated, or is fake
+            return False 
+
+    return False
 
 # --- Helpers ---
 def format_time_ago(timestamp_str):
@@ -134,16 +181,46 @@ def safe_float(val):
 
 def calculate_display_price(item):
     b = item.get('branch_name', '').lower()
-    s, o = safe_float(item.get('sale_price')), safe_float(item.get('original_price'))
-    if 'alfatah' in b: return s or o
-    if 'metro' in b: return s if item.get('is_sale') else o
-    return s or o
+    s = safe_float(item.get('sale_price'))
+    o = safe_float(item.get('original_price'))
+    is_sale_flag = item.get('is_sale') # Usually a boolean True/False
+
+    # 1. METRO RULE: Strict check on the 'is_sale' flag
+    if 'metro' in b:
+        return s if is_sale_flag is True else o
+
+    # 2. FOODPANDA & AL-FATAH RULE: If sale exists, show it; else original
+    # (This also covers any other branches you might add later)
+    if s is not None:
+        return s
+    
+    return o
 
 def check_stock_status(item):
-    if item.get('is_available') is False: return False
-    s, l = safe_float(item.get('total_stock')), safe_float(item.get('max_allow_per_order'))
-    if s is not None and s <= 0: return False
-    if l is not None and l <= 0: return False
+    # 1. Immediate exit if explicitly marked unavailable
+    if item.get('is_available') is False: 
+        return False
+    
+    # 2. Get values and convert to float, default to None if conversion fails
+    s_raw = item.get('total_stock')
+    l_raw = item.get('max_allow_per_order')
+    
+    s = safe_float(s_raw)
+    l = safe_float(l_raw)
+    
+    # 3. STRICT CHECK: If it is a number and it is 0 or less, it's out of stock
+    # We use 'is not None' to make sure we don't accidentally block products
+    # that simply don't have stock data in the DB.
+    if s is not None and s <= 0: 
+        return False
+        
+    if l is not None and l <= 0: 
+        return False
+        
+    # 4. TRAP FOR STRINGS: Sometimes '0' comes as a string "0"
+    if str(s_raw).strip() == "0" or str(l_raw).strip() == "0":
+        return False
+
     return True
 
 def render_product_row(item, is_comparison=False):
