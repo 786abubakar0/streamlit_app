@@ -46,29 +46,40 @@ hide_st_style = """
             /* Remove the 'Made with Streamlit' link specifically */
             div[data-testid="stStatusWidget"] {display: none;}
 
-          /* 2. THE CHECKBOX REVOLUTION */
-    /* Target the base checkbox container */
-    
-   /* 1. The Outer Red Box */
-[data-testid="stCheckbox"] {
-    display: flex !important;
-    justify-content: center !important; 
-    align-items: center !important;     
-    padding: 2px !important; 
-    background-color: rgba(255, 75, 75, 0.6) !important; /* Solid Sharp Red */
-    border-radius: 8px;
-    width: 100% !important;
-    margin: 0 auto !important; /* This centers the whole red box in your column */
-}
+/* 1. The Outer Container (Red Box) */
+    [data-testid="stCheckbox"] {
+        display: flex !important;
+        justify-content: center !important; 
+        align-items: center !important;     
+        padding: 5px !important; 
+        background-color: rgba(255, 75, 75, 0.6) !important;
+        border-radius: 8px;
+        width: fit-content !important;
+        margin: 0 auto !important; /* Centers the red box in the column */
+    }
 
-/* 2. THE FIX: Center the actual checkbox inside the red box */
-[data-testid="stCheckbox"] div {
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    margin: 0 !important; /* Removes the left margin Streamlit adds */
-    padding: 0 !important;
-}
+    /* 2. Target the Label (The immediate child) */
+    [data-testid="stCheckbox"] > label {
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        gap: 0px !important; /* Removes gap between box and ghost label */
+    }
+
+    /* 3. Target the Span (The actual Checkbox square) */
+    [data-testid="stCheckbox"] span {
+        margin: 0 !important; /* Removes Streamlit's default right margin */
+        flex-shrink: 0 !important;
+    }
+
+    /* 4. Hide the internal label div that takes up space */
+    [data-testid="stCheckbox"] label > div {
+        display: none !important;
+        width: 0px !important;
+    }
 
 
 
