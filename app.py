@@ -359,20 +359,34 @@ if verify_device():
             clean_q_for_dist = raw_q.lower().strip()
             
             for item in all_candidates:
-                item['display_price'] = calculate_display_price(item)
-                item['is_actually_in_stock'] = check_stock_status(item)
-                item['time_ago'] = format_time_ago(item.get('fetched_at'))
+
+                fetched_at = item.get('fetched_at')
+                is_fresh = True
+                if fetched_at:
+                    dt_fetched = datetime.fromisoformat(fetched_at.replace('Z', '+00:00'))
+                    age_hours = (datetime.now(timezone.utc) - dt_fetched).total_seconds() / 3600
+                    
+                    # CRITICAL: If older than 20 hours, skip this item!
+                    if age_hours >= 20:
+                        is_fresh = False
                 
-                # 2. CALCULATE DISTANCE SCORE (0 to 100)
-                # fuzz.ratio is the direct implementation of Levenshtein Distance
-                # turned into a percentage: 100 = 0 distance, 0 = maximum distance.
-                # item['match_score'] = fuzz.ratio(clean_q_for_dist, item['title'].lower()[:len(clean_q_for_dist)])
-                item['match_score'] = fuzz.partial_ratio(clean_q_for_dist, item['title'].lower())
-                # We use a threshold of 20 just to filter out completely unrelated text
-                if item['match_score'] >= 20:
-                    b_n = item['branch_name']
-                    if b_n in branch_buckets:
-                        branch_buckets[b_n].append(item)
+                if is_fresh:
+                    item['display_price'] = calculate_display_price(item)
+                    item['is_actually_in_stock'] = check_stock_status(item)
+                    item['time_ago'] = format_time_ago(item.get('fetched_at'))
+                    
+
+                    
+                    # 2. CALCULATE DISTANCE SCORE (0 to 100)
+                    # fuzz.ratio is the direct implementation of Levenshtein Distance
+                    # turned into a percentage: 100 = 0 distance, 0 = maximum distance.
+                    # item['match_score'] = fuzz.ratio(clean_q_for_dist, item['title'].lower()[:len(clean_q_for_dist)])
+                    item['match_score'] = fuzz.partial_ratio(clean_q_for_dist, item['title'].lower())
+                    # We use a threshold of 20 just to filter out completely unrelated text
+                    if item['match_score'] >= 20:
+                        b_n = item['branch_name']
+                        if b_n in branch_buckets:
+                            branch_buckets[b_n].append(item)
             
             # 3. SORT BY DISTANCE & PICK TOP 50
             for b in branch_buckets:
