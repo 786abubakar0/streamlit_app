@@ -16,6 +16,8 @@ def get_supabase():
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"])
 
 supabase = get_supabase()
+# Initialize CookieManager GLOBALLY to ensure browser persistence
+cookie_manager = stx.CookieManager(key="main_cookie_manager")
 
 @st.cache_data(ttl=3600)
 def get_branches():
@@ -98,74 +100,70 @@ if "searching" not in st.session_state:
     st.session_state.searching = False
 if "current_query" not in st.session_state:
     st.session_state.current_query = ""
+# Global counter to prevent duplicate Streamlit keys in a single run
+if "key_counter" not in st.session_state:
+    st.session_state.key_counter = 0
+if "auth_loading" not in st.session_state:
+    st.session_state.auth_loading = False
+    
+# 4. Security Guard (Fixed Retry & Persistence)
+SESSION_EXPIRY_DAYS = 1 
 
-# 3. Device Security
 def verify_device():
-    if st.session_state.auth_token:
-        return True
-    cookie_manager = stx.CookieManager()
-    saved_token = None
-    for _ in range(5):
-        saved_token = cookie_manager.get('auth_token_pk')
-        if saved_token: break
-        time.sleep(0.1) 
+    if st.session_state.get('auth_token'): return True
 
-    if not saved_token:
-        st.markdown("### 🔐 Device Verification Required")
-        ua = streamlit_js_eval(js_expressions="navigator.userAgent", key="ua")
-        screen = streamlit_js_eval(js_expressions="screen.width + 'x' + screen.height", key="res")
-        cores = streamlit_js_eval(js_expressions="navigator.hardwareConcurrency", key="cores")
-        timezone_val = streamlit_js_eval(js_expressions="Intl.DateTimeFormat().resolvedOptions().timeZone", key="tz")
-        canvas_js = """(function(){var canvas = document.createElement('canvas');var ctx = canvas.getContext('2d');ctx.textBaseline = "top";ctx.font = "14px 'Arial'";ctx.fillText("PriceCheck-Auth-99", 2, 2);return canvas.toDataURL();})()"""
-        canvas_fp = streamlit_js_eval(js_expressions=canvas_js, key="canvas")
-
-        if not all([ua, screen, cores, canvas_fp]):
-            with st.spinner("Securely connecting..."):
-                time.sleep(0.1)
-            return False 
-
-        signature = hashlib.sha256(f"{ua}|{screen}|{cores}|{timezone_val}|{canvas_fp}".encode()).hexdigest()
-        token_input = st.text_input("Enter Access Token", type="password", key="login_input")
-        btn_place = st.empty()
-        
-        if btn_place.button("Verify & Save Device", use_container_width=True):
-            btn_place.info("⏳ Authenticating...")
-            res = supabase.table("authorized_devices").select("*").eq("token", token_input).execute()
+    saved_data = cookie_manager.get('auth_token_v2')
+    if saved_data and "|" in saved_data:
+        try:
+            saved_token, saved_ts = saved_data.split("|")
+            if (datetime.now() - datetime.fromisoformat(saved_ts)) < timedelta(days=SESSION_EXPIRY_DAYS):
+                st.session_state.auth_token = saved_token
+                return True
+        except: cookie_manager.delete('auth_token_v2')
             
+    st.markdown("### 🔐 Device Verification Required")
+    ua = streamlit_js_eval(js_expressions="navigator.userAgent", key="ua")
+    screen = streamlit_js_eval(js_expressions="screen.width + 'x' + screen.height", key="res")
+    cores = streamlit_js_eval(js_expressions="navigator.hardwareConcurrency", key="cores")
+    tz = streamlit_js_eval(js_expressions="Intl.DateTimeFormat().resolvedOptions().timeZone", key="tz")
+    canvas = streamlit_js_eval(js_expressions="(function(){var canvas = document.createElement('canvas');var ctx = canvas.getContext('2d');ctx.textBaseline='top';ctx.font='14px Arial';ctx.fillText('PriceCheck-Auth-99',2,2);return canvas.toDataURL();})()", key="canvas")
+
+    if not all([ua, screen, cores, canvas]):
+        st.info("🔄 Establishing secure connection...")
+        return False 
+
+    signature = hashlib.sha256(f"{ua}|{screen}|{cores}|{tz}|{canvas}".encode()).hexdigest()
+    token_input = st.text_input("Enter Access Token", type="password", key="login_input", disabled=st.session_state.auth_loading)
+    btn_place = st.empty()
+    
+    if not st.session_state.auth_loading:
+        if btn_place.button("Verify & Save Device", use_container_width=True, type="primary"):
+            st.session_state.auth_loading = True
+            st.rerun()
+    else:
+        btn_place.info("⏳ Authenticating...")
+        try:
+            res = supabase.table("authorized_devices").select("*").eq("token", st.session_state.login_input).execute()
             if res.data:
                 device = res.data[0]
-                if not device["is_active"]: 
-                    st.error("🚫 Token deactivated.")
+                if not device["is_active"]: st.error("🚫 Token deactivated.")
                 elif device["device_signature"] and device["device_signature"] != signature:
                     st.error("🔒 Token locked to another device.")
                 else:
-                    # --- NEW LOGIC START ---
-                    # If the DB signature is empty, save the current one to "lock" it
                     if not device["device_signature"]:
-                        supabase.table("authorized_devices").update({"device_signature": signature}).eq("token", token_input).execute()
-                    # --- NEW LOGIC END ---
-
-                    cookie_manager.set('auth_token_pk', token_input, expires_at=datetime.now() + timedelta(days=1))
-                    st.session_state.auth_token = token_input
+                        supabase.table("authorized_devices").update({"device_signature": signature}).eq("token", st.session_state.login_input).execute()
+                    
+                    cookie_manager.set('auth_token_v2', f"{st.session_state.login_input}|{datetime.now().isoformat()}", expires_at=datetime.now() + timedelta(days=SESSION_EXPIRY_DAYS))
+                    st.session_state.auth_token = st.session_state.login_input
+                    st.session_state.auth_loading = False
                     st.success("✅ Access Granted!")
-                    time.sleep(0.6) 
+                    time.sleep(1)
                     st.rerun()
-            else:
-                st.error("❌ Invalid Token.")
-        return False
-    
-    # After the "if not saved_token" block
-    if saved_token and not st.session_state.auth_token:
-        # DO NOT just return True. Check the DB first!
-        res = supabase.table("authorized_devices").select("is_active").eq("token", saved_token).execute()
+            else: st.error("❌ Invalid Token.")
+        except Exception as e: st.error(f"⚠️ Error: {e}")
         
-        if res.data and res.data[0]["is_active"]:
-            st.session_state.auth_token = saved_token
-            return True
-        else:
-            # Token was deleted, deactivated, or is fake
-            return False 
-
+        st.session_state.auth_loading = False
+        if st.button("🔄 Try Again", use_container_width=True): st.rerun()
     return False
 
 # --- Helpers ---
@@ -235,19 +233,36 @@ def check_stock_status(item):
     return True
 
 def render_product_row(item, is_comparison=False):
-    # 1. Create a truly unique ID using Title + Branch
-    unique_id = hashlib.md5(f"{item['title']}{item['branch_name']}".encode()).hexdigest()
+    # Increment counter for every row rendered to ensure absolute key uniqueness
+    st.session_state.key_counter += 1
+    count = st.session_state.key_counter
+
+    # 1. Generate a ID for the product data itself
+    unique_string = f"{item['title']}{item['branch_name']}{item.get('url', '')}"
+    unique_id = hashlib.md5(unique_string.encode()).hexdigest()
     
-    # 2. Add a prefix based on WHERE it is being rendered
+    # 2. Define specific keys using the counter to prevent DuplicateKey errors
     prefix = "comp" if is_comparison else "search"
-    cb_key = f"{prefix}_{unique_id}_{item['branch_name']}"
+    cb_key = f"{prefix}_{unique_id}_{count}"
 
     def toggle_basket():
-        if st.session_state[cb_key]:
+        # 1. Get the new value from the checkbox just clicked
+        new_val = st.session_state[cb_key]
+        
+        # 2. Update the Comparison Basket (The Source of Truth)
+        if new_val:
             st.session_state.compare_basket[unique_id] = item
         else:
             st.session_state.compare_basket.pop(unique_id, None)
-
+        
+        # 3. Synchronize all other checkbox keys associated with this product
+        # This ensures if you click it in the Store Tab, it updates in Comparison, and vice versa
+        prefix_to_sync = "comp" if not is_comparison else "search"
+        
+        # We look for any keys in session_state that match this product's unique_id
+        for key in st.session_state.keys():
+            if key.startswith(prefix_to_sync) and unique_id in key:
+                st.session_state[key] = new_val
     # --- MAIN ROW ---
     cols = st.columns([0.5, 3, 1, 1, 1])
     in_basket = unique_id in st.session_state.compare_basket
@@ -272,25 +287,10 @@ def render_product_row(item, is_comparison=False):
     if item.get('url'): 
         cols[4].link_button("Visit", item['url'], use_container_width=True)
 
-    # --- SHOW DETAILS (The missing part) ---
-    # with st.expander("📦 View Stock Details"):
-    #     d_cols = st.columns(2)
-        
-    #     # Total Stock info
-    #     stock = item.get('total_stock', 'N/A')
-    #     d_cols[0].write(f"**Total Stock:** {stock}")
-        
-    #     # Per Order Limit info
-    #     limit = item.get('max_allow_per_order', 'N/A')
-    #     d_cols[1].write(f"**Limit per Order:** {limit}")
-        
-    #     # Check if actually out of stock based on backend logic
-    #     if not item['is_actually_in_stock']:
-    #         st.warning("⚠️ This item is currently unavailable at this branch.")
-
     st.divider()
 # 4. Main App Logic
 if verify_device():
+    st.session_state.key_counter = 0  # Reset counter at start of every rerun
     st.title("🛒 Price Comparison PK")
 
     # --- SIDEBAR ---
@@ -309,28 +309,42 @@ if verify_device():
     st.sidebar.metric("Items Selected", basket_count)
     
     if basket_count > 0:
-        if st.sidebar.button("🗑️ Clear All Selected", disabled=st.session_state.searching):
+        if st.sidebar.button("🗑️ Clear Basket", disabled=st.session_state.searching):
+            # 1. Clear the source of truth
             st.session_state.compare_basket = {}
+            
+            # 2. Reset all visual checkbox states in session_state
+            # This finds every checkbox key (search_ and comp_) and sets it to False
+            for key in list(st.session_state.keys()):
+                if key.startswith("search_") or key.startswith("comp_"):
+                    st.session_state[key] = False
+            
+            # 3. Force refresh to update the UI
             st.rerun()
     else:
         st.sidebar.info("Select items to compare.")
 
     # --- SEARCH FORM (With doubling fix) ---
+    # --- SEARCH FORM (Improved doubling fix) ---
     search_placeholder = st.empty()
 
-    with search_placeholder.container():
-        with st.form("search_form"):
-            search_input = st.text_input("Search products...", disabled=st.session_state.searching)
-            if st.form_submit_button("Search", disabled=st.session_state.searching, use_container_width=True):
-                if search_input:
-                    st.session_state.searching = True
-                    st.session_state.current_query = search_input
-                    st.rerun()
+    if not st.session_state.searching:
+        with search_placeholder.container():
+            with st.form("search_form"):
+                search_input = st.text_input("Search products...", value=st.session_state.current_query)
+                if st.form_submit_button("Search", use_container_width=True, type="primary"):
+                    if search_input:
+                        st.session_state.searching = True
+                        st.session_state.current_query = search_input
+                        st.rerun()
+    else:
+        # This replaces the entire form area with an info box during the process
+        search_placeholder.info(f"🔎 Searching for: **{st.session_state.current_query}**")
 
     # --- SEARCH PROCESSING (Phase 2) ---
     if st.session_state.searching:
         # Immediately clear the form placeholder to prevent visual doubling
-        search_placeholder.empty()
+        # search_placeholder.empty()
         
         all_candidates = []
         with st.status("🔍 Searching Database...", expanded=True) as status:
@@ -340,21 +354,17 @@ if verify_device():
             fields = "title, url, original_price, is_sale, sale_price, total_stock, max_allow_per_order, is_available, branch_name, fetched_at"
             
             try:
-                # 1. Primary Pair Match
-                if len(words) >= 2:
-                    prefs = [w[:3] for w in words]
-                    conds = [f"and(title.ilike.%{p1}%,title.ilike.%{p2}%)" for p1, p2 in itertools.combinations(prefs, 2)]
-                    for b in selected_branches:
-                        res = supabase.table("products").select(fields).eq("branch_name", b).or_(",".join(conds)).limit(80).execute()
-                        if res.data: all_candidates.extend(res.data)
-                
-                # 2. Fallback (Mezan2 fix)
-                if not all_candidates:
-                    search_term = words[0] if words else clean_q
-                    pref = search_term[:3] 
-                    for b in selected_branches:
-                        res = supabase.table("products").select(fields).eq("branch_name", b).ilike('title', f"%{pref}%").limit(100).execute()
-                        if res.data: all_candidates.extend(res.data)
+                # Use the optimized RPC function instead of manual table filtering [cite: 91, 95]
+                res = supabase.rpc(
+                    "foodpanda_search_v5", 
+                    {
+                        "search_term": raw_q, 
+                        "selected_branches": selected_branches
+                    }
+                ).execute()
+
+                if res.data:
+                    all_candidates = res.data
                 
                 status.update(label=f"✅ Found {len(all_candidates)} candidates", state="complete", expanded=False)
             except Exception as e:
@@ -364,47 +374,29 @@ if verify_device():
         if all_candidates:
             branch_buckets = {b: [] for b in selected_branches}
             
-            # 1. CLEAN THE QUERY for the Distance Calculation
-            # This removes numbers/symbols so "Mezan2" -> "mezan"
-            # This ensures the distance to "Mezan Oil" stays as small as possible
-            clean_q_for_dist = raw_q.lower().strip()
-            
             for item in all_candidates:
-
+                # Still check freshness in Python to ensure 20-hour rule [cite: 98, 99]
                 fetched_at = item.get('fetched_at')
                 is_fresh = True
                 if fetched_at:
                     dt_fetched = datetime.fromisoformat(fetched_at.replace('Z', '+00:00'))
                     age_hours = (datetime.now(timezone.utc) - dt_fetched).total_seconds() / 3600
-                    
-                    # CRITICAL: If older than 20 hours, skip this item!
                     if age_hours >= 20:
                         is_fresh = False
                 
                 if is_fresh:
+                    # Apply helper formatting [cite: 77, 78, 80]
                     item['display_price'] = calculate_display_price(item)
                     item['is_actually_in_stock'] = check_stock_status(item)
                     item['time_ago'] = format_time_ago(item.get('fetched_at'))
                     
-
-                    
-                    # 2. CALCULATE DISTANCE SCORE (0 to 100)
-                    # fuzz.ratio is the direct implementation of Levenshtein Distance
-                    # turned into a percentage: 100 = 0 distance, 0 = maximum distance.
-                    # item['match_score'] = fuzz.ratio(clean_q_for_dist, item['title'].lower()[:len(clean_q_for_dist)])
-                    item['match_score'] = fuzz.partial_ratio(clean_q_for_dist, item['title'].lower())
-                    # We use a threshold of 20 just to filter out completely unrelated text
-                    if item['match_score'] >= 20:
-                        b_n = item['branch_name']
-                        if b_n in branch_buckets:
-                            branch_buckets[b_n].append(item)
+                    b_n = item['branch_name']
+                    if b_n in branch_buckets:
+                        branch_buckets[b_n].append(item)
             
-            # 3. SORT BY DISTANCE & PICK TOP 50
+            # The RPC already sorts by relevance, so we just take the top 50 per branch [cite: 104]
             for b in branch_buckets:
-                # Sort: Highest score (Lowest Levenshtein Distance) first
-                sorted_list = sorted(branch_buckets[b], key=lambda x: x['match_score'], reverse=True)
-                # Display only the 50 most relevant
-                branch_buckets[b] = sorted_list[:50]
+                branch_buckets[b] = branch_buckets[b][:50]
                 
             st.session_state.cached_results = branch_buckets
         else:
