@@ -266,11 +266,13 @@ def render_product_row(item, is_comparison=False):
     # --- MAIN ROW ---
     cols = st.columns([0.5, 3, 1, 1, 1])
     in_basket = unique_id in st.session_state.compare_basket
-    
+    # Pre-set the session state for this specific key so the checkbox knows its value
+    if cb_key not in st.session_state:
+        st.session_state[cb_key] = in_basket
     cols[0].checkbox(
         " ", 
         key=cb_key, 
-        value=in_basket, 
+        # value=in_basket, 
         on_change=toggle_basket
     )
 
@@ -288,6 +290,8 @@ def render_product_row(item, is_comparison=False):
         cols[4].link_button("Visit", item['url'], use_container_width=True)
 
     st.divider()
+
+
 # 4. Main App Logic
 if verify_device():
     st.session_state.key_counter = 0  # Reset counter at start of every rerun
